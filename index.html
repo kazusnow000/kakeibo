@@ -40,8 +40,17 @@
   input, select {
     width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
     font-size: 16px; font-family: inherit; background: var(--card); color: var(--ink); outline: none;
+    min-width: 0;
+  }
+  /* iOSの日付入力は固有の最小幅を持ち、列からはみ出して隣に重なるため無効化する */
+  input[type="date"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-height: 44px;
+    text-align: left;
   }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid2 > div { min-width: 0; }
   .stack { display: grid; gap: 12px; }
   .btn {
     width: 100%; padding: 13px 0; border-radius: 10px; font-size: 16px; font-family: inherit;
