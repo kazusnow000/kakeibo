@@ -134,7 +134,7 @@
 <body>
 
 <header>
-  <div class="title">家計簿ver1.1</div>
+  <div class="title">家計簿</div>
   <div class="sub">手入力で収支を記録・iPhone内に保存</div>
 </header>
 
@@ -159,6 +159,9 @@
       <button class="btn btn-primary" id="f-save" style="margin-top:14px">支出を保存する</button>
     </div>
   </section>
+
+  <!-- 定額タブ -->
+  <section id="tab-fixed" hidden></section>
 
   <!-- 月次タブ -->
   <section id="tab-monthly" hidden></section>
@@ -216,6 +219,7 @@
 
 <nav>
   <button data-tab="input" class="on">入力</button>
+  <button data-tab="fixed">定額</button>
   <button data-tab="monthly">月次</button>
   <button data-tab="trend">推移</button>
   <button data-tab="history">履歴</button>
@@ -230,6 +234,7 @@ const EXPENSE_CATEGORIES = ["食費","日用品","住居費","水道光熱費","
 const INCOME_CATEGORIES  = ["給与","賞与","その他収入"];
 const KEY_PREFIX = "kakeibo:records:";
 const KEY_INDEX  = "kakeibo:months-index";
+const KEY_FIXED  = "kakeibo:fixed";
 
 // ───────── ユーティリティ ─────────
 const $ = (id) => document.getElementById(id);
@@ -277,6 +282,48 @@ function removeRecord(id, ym) {
   }
 }
 
+// ───────── 定額支出（テンプレート） ─────────
+// テンプレート形式: { id, day, category, amount, store, memo, active, startYm, lastPosted }
+function loadFixed() {
+  try { return JSON.parse(localStorage.getItem(KEY_FIXED)) || []; } catch { return []; }
+}
+function saveFixed(list) {
+  localStorage.setItem(KEY_FIXED, JSON.stringify(list));
+}
+// 月末より大きい日（31日など）はその月の末日に丸める
+const lastDayOf = (ym) => new Date(Number(ym.slice(0,4)), Number(ym.slice(5)), 0).getDate();
+const dateOf = (ym, day) => ym + "-" + String(Math.min(day, lastDayOf(ym))).padStart(2,"0");
+// 次に計上される予定の月
+const nextYmOf = (t) => t.lastPosted ? shiftYm(t.lastPosted, 1) : t.startYm;
+
+// 予定日を過ぎた分を支出として計上する。計上済みの月は lastPosted で管理するため、
+// ユーザーが履歴から消したレコードが復活することはない。
+function applyFixed() {
+  const list = loadFixed();
+  if (list.length === 0) return 0;
+  const today = todayStr();
+  let posted = 0, changed = false;
+  for (const t of list) {
+    if (t.active === false) continue;
+    let ym = nextYmOf(t);
+    while (ym <= currentYm()) {
+      const date = dateOf(ym, t.day);
+      if (date > today) break;
+      addRecord({
+        id: Date.now() + "-" + Math.random().toString(36).slice(2,7),
+        type: "expense", date, amount: t.amount, category: t.category,
+        store: t.store, memo: t.memo,
+        source: "fixed", fixedId: t.id, createdAt: new Date().toISOString(),
+      });
+      t.lastPosted = ym;
+      posted++; changed = true;
+      ym = shiftYm(ym, 1);
+    }
+  }
+  if (changed) saveFixed(list);
+  return posted;
+}
+
 // ───────── 集計 ─────────
 function summarize(recs) {
   let income = 0, expense = 0;
@@ -295,6 +342,7 @@ let selectedYm = currentYm();
 let formType = "expense";
 let typeFilter = "all";
 let editing = null; // { id, ym }
+let fixedEditingId = null; // 定額支出の編集対象
 
 // ───────── 共通UI ─────────
 let toastTimer = null;
@@ -353,6 +401,121 @@ $("f-save").onclick = () => {
   toast((formType === "income" ? "収入" : "支出") + "を保存しました");
   resetForm();
 };
+
+// ───────── 定額タブ ─────────
+function renderFixed() {
+  const el = $("tab-fixed");
+  const list = loadFixed();
+  const editingItem = fixedEditingId ? list.find((t) => t.id === fixedEditingId) : null;
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-title">${editingItem ? "定額支出を編集" : "定額支出を登録"}</div>
+      <div class="stack">
+        <div class="grid2">
+          <div><label class="field">毎月の支出予定日 *</label><input type="number" id="x-day" inputmode="numeric" min="1" max="31" placeholder="25"></div>
+          <div><label class="field">金額（円）*</label><input type="number" id="x-amount" inputmode="numeric" min="1" placeholder="0"></div>
+        </div>
+        <div><label class="field">カテゴリ *</label><select id="x-category"></select></div>
+        <div><label class="field">項目名 *</label><input type="text" id="x-store" placeholder="例: 家賃、携帯代、サブスク"></div>
+        <div><label class="field">備考</label><input type="text" id="x-memo" placeholder="例: Netflix・Spotify"></div>
+        ${editingItem ? "" : `<div><label class="field">初回の計上</label><select id="x-first">
+          <option value="this">今月分から（予定日が過ぎていればすぐ計上）</option>
+          <option value="next">来月分から</option>
+        </select></div>`}
+      </div>
+      <div style="${editingItem ? "display:grid;grid-template-columns:1fr 1fr 2fr;gap:10px;" : ""}margin-top:14px">
+        ${editingItem ? `<button class="btn btn-danger" id="x-delete">削除</button>
+        <button class="btn btn-ghost" id="x-cancel">やめる</button>` : ""}
+        <button class="btn btn-primary" id="x-save">${editingItem ? "更新する" : "登録する"}</button>
+      </div>
+      ${editingItem ? `<button class="btn btn-ghost" id="x-toggle" style="margin-top:10px">${editingItem.active === false ? "自動計上を再開する" : "自動計上を一時停止する"}</button>` : ""}
+      ${editingItem ? "" : `<p class="note" style="margin-top:10px">登録すると、毎月その日に支出として自動で計上されます。金額が変わったときは、下の一覧をタップして書き換えてください。</p>`}
+    </div>
+
+    <div class="card" style="padding:4px 16px">
+      ${list.length === 0
+        ? `<div class="empty">登録された定額支出はありません。家賃・水道光熱費・携帯代・サブスクなど、毎月決まった支出を上で登録できます。</div>`
+        : list.map((t) => `
+          <div class="rec" data-fixed="${t.id}">
+            <div class="rec-mark" style="background:${t.active === false ? "var(--line)" : "var(--vermilion)"}"></div>
+            <div class="rec-body">
+              <div class="rec-main">${esc(t.store)}<span class="rec-store">${esc(t.category)}</span></div>
+              <div class="rec-meta">毎月${t.day}日${t.memo ? "・" + esc(t.memo) : ""}${t.active === false ? "・停止中" : "・次回 " + dateOf(nextYmOf(t), t.day)}</div>
+            </div>
+            <div class="rec-amt num">−${yen(t.amount)}</div>
+          </div>`).join("")}
+    </div>
+
+    ${list.length === 0 ? "" : `<div class="card">
+      <div class="card-title">合計</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span class="note">有効な定額支出（月あたり）</span>
+        <span class="num" style="font-size:20px">${yen(list.filter((t) => t.active !== false).reduce((s,t) => s + t.amount, 0))}</span>
+      </div>
+    </div>`}`;
+
+  fillCategories($("x-category"), "expense", editingItem ? editingItem.category : "住居費");
+  if (editingItem) {
+    $("x-day").value = editingItem.day;
+    $("x-amount").value = editingItem.amount;
+    $("x-store").value = editingItem.store;
+    $("x-memo").value = editingItem.memo || "";
+    $("x-cancel").onclick = () => { fixedEditingId = null; renderFixed(); };
+    $("x-delete").onclick = () => {
+      if (!confirm("この定額支出の登録を削除しますか？\n（すでに計上された過去の記録は残ります）")) return;
+      saveFixed(loadFixed().filter((t) => t.id !== fixedEditingId));
+      fixedEditingId = null;
+      toast("削除しました");
+      renderFixed();
+    };
+    $("x-toggle").onclick = () => {
+      const list2 = loadFixed();
+      const t = list2.find((x) => x.id === fixedEditingId);
+      t.active = t.active === false;
+      // 再開時は、停止中に過ぎた分をさかのぼって計上しない
+      if (t.active) t.lastPosted = shiftYm(currentYm(), -1);
+      saveFixed(list2);
+      toast(t.active ? "自動計上を再開しました" : "自動計上を停止しました");
+      fixedEditingId = null;
+      renderFixed();
+    };
+  }
+  $("x-save").onclick = saveFixedForm;
+  el.querySelectorAll("[data-fixed]").forEach((row) => {
+    row.onclick = () => { fixedEditingId = row.dataset.fixed; renderFixed(); window.scrollTo(0,0); };
+  });
+}
+
+function saveFixedForm() {
+  const day = Math.round(Number($("x-day").value));
+  const amount = Math.round(Number($("x-amount").value));
+  const store = $("x-store").value.trim();
+  if (!Number.isFinite(day) || day < 1 || day > 31) { toast("支出予定日は1〜31で入力してください"); return; }
+  if (!Number.isFinite(amount) || amount <= 0) { toast("正の金額を入力してください"); return; }
+  if (!store) { toast("項目名を入力してください"); return; }
+
+  const list = loadFixed();
+  if (fixedEditingId) {
+    const t = list.find((x) => x.id === fixedEditingId);
+    // 計上済みの記録には触れず、これから計上される分にのみ反映する
+    Object.assign(t, { day, amount, store, category: $("x-category").value, memo: $("x-memo").value.trim() });
+    saveFixed(list);
+    fixedEditingId = null;
+    toast("更新しました");
+  } else {
+    const startYm = $("x-first").value === "next" ? shiftYm(currentYm(), 1) : currentYm();
+    list.push({
+      id: "f" + Date.now() + "-" + Math.random().toString(36).slice(2,7),
+      day, amount, store, category: $("x-category").value, memo: $("x-memo").value.trim(),
+      active: true, startYm, lastPosted: null,
+    });
+    saveFixed(list);
+    const posted = applyFixed();
+    toast(posted > 0 ? "登録し、" + posted + "件を計上しました" : "登録しました");
+  }
+  renderFixed();
+}
 
 // ───────── 月次タブ ─────────
 function monthNavHtml() {
@@ -473,7 +636,7 @@ function renderHistory() {
             <div class="rec-mark" style="background:${r.type === "income" ? "var(--indigo)" : "var(--vermilion)"}"></div>
             <div class="rec-body">
               <div class="rec-main">${esc(r.category)}${r.store ? `<span class="rec-store">${esc(r.store)}</span>` : ""}</div>
-              <div class="rec-meta">${r.date}${r.memo ? "・" + esc(r.memo) : ""}</div>
+              <div class="rec-meta">${r.date}${r.source === "fixed" ? "・定額" : ""}${r.memo ? "・" + esc(r.memo) : ""}</div>
             </div>
             <div class="rec-amt num" style="color:${r.type === "income" ? "var(--indigo)" : "var(--ink)"}">${r.type === "income" ? "" : "−"}${yen(r.amount)}</div>
           </div>`).join("")}
@@ -532,6 +695,7 @@ $("export-btn").onclick = () => {
   const payload = {
     app: "kakeibo", version: 1, exportedAt: new Date().toISOString(),
     months: Object.fromEntries(idx.map((ym) => [ym, loadMonth(ym)])),
+    fixed: loadFixed(),
   };
   const blob = new Blob([JSON.stringify(payload, null, 1)], { type: "application/json" });
   const a = document.createElement("a");
@@ -560,6 +724,8 @@ $("import-input").onchange = (e) => {
       const months = Object.keys(payload.months).filter((ym) => /^\d{4}-\d{2}$/.test(ym));
       months.forEach((ym) => saveMonth(ym, payload.months[ym]));
       saveIndex(months);
+      // 定額支出を含まない古いバックアップの場合は、現在の設定をそのまま残す
+      if (Array.isArray(payload.fixed)) saveFixed(payload.fixed);
       toast("復元しました");
       render();
     } catch {
@@ -573,11 +739,14 @@ $("import-input").onchange = (e) => {
 // ───────── タブ切替・描画 ─────────
 function setTab(next) {
   tab = next;
+  if (tab !== "fixed") fixedEditingId = null;
+  applyFixed(); // 予定日を過ぎた定額支出を計上する
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-  ["input","monthly","trend","history","data"].forEach((t) => { $("tab-" + t).hidden = t !== tab; });
+  ["input","fixed","monthly","trend","history","data"].forEach((t) => { $("tab-" + t).hidden = t !== tab; });
   render();
 }
 function render() {
+  if (tab === "fixed") renderFixed();
   if (tab === "monthly") renderMonthly();
   if (tab === "trend") renderTrend();
   if (tab === "history") renderHistory();
@@ -587,6 +756,7 @@ document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => setTa
 // ───────── 初期化 ─────────
 setFormType("expense");
 resetForm();
+applyFixed(); // 起動時に、予定日を過ぎた定額支出を計上する
 </script>
 </body>
 </html>
