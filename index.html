@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Simple家計簿">
+<meta name="theme-color" content="#F6F6F2">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <title>家計簿</title>
 <style>
   :root {
@@ -757,6 +761,16 @@ document.querySelectorAll("nav button").forEach((b) => { b.onclick = () => setTa
 setFormType("expense");
 resetForm();
 applyFixed(); // 起動時に、予定日を過ぎた定額支出を計上する
+
+// ───────── PWA ─────────
+// localStorageのキー・保存形式には触れず、アプリ本体だけをキャッシュする。
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {
+      // PWA機能が使えない環境でも、家計簿本体は通常どおり動作する。
+    });
+  });
+}
 </script>
 </body>
 </html>
