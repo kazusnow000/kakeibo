@@ -1,12 +1,12 @@
 /* Simple家計簿: offline-first app shell; user data remains in localStorage. */
-const CACHE_NAME = "simple-kakeibo-v1";
+const CACHE_NAME = "simple-kakeibo-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./icons/apple-touch-icon.png",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./apple-touch-icon.png",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
